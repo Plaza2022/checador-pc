@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bitácora Plaza China Multiplaza</title>
+
+<link rel="icon" type="image/png" href="icono.png">
+<script src="https://unpkg.com/html5-qrcode@2.3.8"></script>
+
+<style>
+body{
+font-family:Arial;
+text-align:center;
+background:#eee;
+margin:0;
+}
+
+header{
+background:#f5a400;
+padding:15px;
+font-size:30px;
+font-weight:bold;
+color:white;
+}
+
+select,button{
+padding:12px;
+font-size:18px;
+margin:5px;
+}
+
+#reader{
+width:300px;
+max-width:100%;
+margin:auto;
+}
+
+.evento{
+width:140px;
+background:#f5a400;
+border:none;
+border-radius:8px;
+}
+
+#adminBtn{
+display:block;
+margin:40px auto 20px auto;
+background:#555;
+color:white;
+border:none;
+border-radius:8px;
+padding:12px 20px;
+}
+
+#tiendaTexto{
+color:#555;
+margin:5px 0;
+}
+</style>
+</head>
+
+<body>
+
+<img src="logo.png" width="300" style="max-width:90%;">
+
+<header>Bitácora Multiplaza</header>
+
+<br>
+
+<div id="contenedorEmpleado">
+
+<select id="empleado" disabled>
+<option value="">Primero escanee el QR de su tienda...</option>
+</select>
+
+<h3 id="empleadoTexto" style="display:none;"></h3>
+
+</div>
+
+<br>
+
+<button onclick="iniciarQR()">
+Escanear QR
+</button>
+
+<div id="reader"></div>
+
+<h3 id="tiendaTexto"></h3>
+<h3 id="codigo"></h3>
+
+<br>
+
+<button class="evento" onclick="guardar('Entrada')">Entrada</button>
+<button class="evento" onclick="guardar('Comer')">Comer</button>
+
+<br>
+
+<button class="evento" onclick="guardar('Retorno')">Retorno</button>
+<button class="evento" onclick="guardar('Salida')">Salida</button>
+
+<button id="adminBtn" onclick="abrirAdmin()">Administrador</button>
+
+<br>
+
+<button class="evento" onclick="abrirHorario()">Horario</button>
+
+<div id="adminPanel" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:white;padding:20px;border-radius:10px;box-shadow:0 0 20px rgba(0,0,0,.3);z-index:9999;">
+
+<h3>Ingrese clave</h3>
+
+<div id="claveVisual" style="font-size:28px;letter-spacing:10px;margin-bottom:15px;height:35px;"></div>
+
+<div style="display:grid;grid-template-columns:repeat(3,70px);gap:8px;justify-content:center;">
+<button onclick="agregarNumero('1')">1</button>
+<button onclick="agregarNumero('2')">2</button>
+<button onclick="agregarNumero('3')">3</button>
+<button onclick="agregarNumero('4')">4</button>
+<button onclick="agregarNumero('5')">5</button>
+<button onclick="agregarNumero('6')">6</button>
+<button onclick="agregarNumero('7')">7</button>
+<button onclick="agregarNumero('8')">8</button>
+<button onclick="agregarNumero('9')">9</button>
+<button onclick="borrarNumero()">←</button>
+<button onclick="agregarNumero('0')">0</button>
+<button onclick="validarClave()">OK</button>
+</div>
+
+<br>
+<button onclick="cerrarAdmin()">Cancelar</button>
+</div>
+
+<script>
+
+// ====== CONFIGURACIÓN ======
+// Pega aquí la URL de tu implementación de Apps Script (termina en /exec)
+const API = "PEGA_AQUI_LA_URL_DEL_SCRIPT/exec";
+
+// ====== ESTADO ======
+let tiendaActual = "";     // viene del QR (se borra después de cada registro)
+let claveIngresada = "";
+let guardando = false;
+
+// ====== COMUNICACIÓN CON EL SCRIPT ======
+async function api(params){
+  const url = API + "?" + new URLSearchParams(params).toString();
+  try{
+    const r = await fetch(url);
+    return await r.json();
+  }catch(e){
+    return { ok:false, mensaje:"No hay conexión con el servidor. Intente de nuevo." };
+  }
+}
+
+// ====== EMPLEADO ASIGNADO AL DISPOSITIVO ======
+function mostrarEmpleadoAsignado(nombre){
+  document.getElementById("empleado").style.display = "none";
+  const texto = document.getElementById("empleadoTexto");
+  texto.style.display = "block";
+  texto.innerHTML = "Empleado: <b></b>";
+  texto.querySelector("b").textContent = nombre;
+}
+
+function limpiarEmpleadoAsignado(){
+  localStorage.removeItem("llave");
+  localStorage.removeItem("empleadoNombre");
+  localStorage.removeItem("empleado"); // clave de la versión anterior
+
+  document.getElementById("empleadoTexto").style.display = "none";
+  const sel = document.getElementById("empleado");
+  sel.style.display = "inline-block";
+  sel.innerHTML = '<option value="">Primero escanee el QR de su tienda...</option>';
+  sel.disabled = true;
+}
+
+async function cargarEmpleados(){
+  const sel = document.getElementById("empleado");
+  sel.disabled = true;
+  sel.innerHTML = '<option value="">Cargando...</option>';
+
+  const r = await api({ accion:"empleados", tienda:tiendaActual });
+
+  if(!r.ok){
+    sel.innerHTML = '<option value="">Escanee el QR de su tienda...</option>';
+    alert(r.mensaje || "No se pudo cargar la lista");
+    tiendaActual = "";
+    document.getElementById("tiendaTexto").textContent = "";
+    return;
+  }
+
+  sel.innerHTML = '<option value="">Seleccione su nombre...</option>';
+  r.empleados.forEach(e => {
+    const op = document.createElement("option");
+    op.value = e.llave;
+    op.textContent = e.nombre;
+    sel.appendChild(op);
+  });
+  sel.disabled = false;
+}
+
+document.getElementById("empleado").addEventListener("change", function(){
+
+  if(this.value === "") return;
+
+  const nombre = this.options[this.selectedIndex].text;
+
+  localStorage.setItem("llave", this.value);
+  localStorage.setItem("empleadoNombre", nombre);
+
+  alert("Se asignó el empleado correctamente");
+  mostrarEmpleadoAsignado(nombre);
+});
+
+// Al abrir la página: si el dispositivo ya tiene empleado, confirmar que sigue activo
+window.onload = async function(){
+
+  const llave  = localStorage.getItem("llave");
+  const nombre = localStorage.getItem("empleadoNombre");
+
+  if(!llave){
+    // Versión anterior guardaba solo el nombre: ya no sirve, hay que elegir de nuevo
+    localStorage.removeItem("empleado");
+    return;
+  }
+
+  mostrarEmpleadoAsignado(nombre || "");
+
+  const r = await api({ accion:"validar", llave:llave });
+
+  if(r.ok === false && r.codigo === "BAJA"){
+    limpiarEmpleadoAsignado();
+    alert("Este usuario ya no tiene acceso. Contacte al administrador.");
+  }
+};
+
+// ====== QR ======
+function iniciarQR(){
+
+  const scanner = new Html5QrcodeScanner(
+    "reader",
+    { fps:10, qrbox:250 }
+  );
+
+  scanner.render(
+    async (texto) => {
+
+      scanner.clear();
+
+      tiendaActual = texto.trim();
+      document.getElementById("tiendaTexto").textContent = "Tienda: " + tiendaActual;
+      document.getElementById("codigo").innerHTML = "QR leído correctamente !!!";
+      localStorage.setItem("tienda", tiendaActual); // para el botón Horario
+
+      // Si el dispositivo aún no tiene empleado, cargar la lista de esta tienda
+      if(!localStorage.getItem("llave")){
+        await cargarEmpleados();
+      }
+    }
+  );
+}
+
+// ====== REGISTRAR ======
+async function guardar(evento){
+
+  if(guardando) return;
+
+  if(tiendaActual === ""){
+    alert("Primero escanea un QR");
+    return;
+  }
+
+  const llave = localStorage.getItem("llave") || document.getElementById("empleado").value;
+
+  if(!llave){
+    alert("Seleccione su nombre");
+    return;
+  }
+
+  guardando = true;
+  const r = await api({ accion:"registrar", tienda:tiendaActual, llave:llave, evento:evento });
+  guardando = false;
+
+  alert(r.mensaje || "Respuesta inesperada del servidor");
+
+  if(r.codigo === "BAJA"){
+    limpiarEmpleadoAsignado();
+  }
+
+  tiendaActual = "";
+  document.getElementById("codigo").innerHTML = "";
+  document.getElementById("tiendaTexto").textContent = "";
+}
+
+// ====== HORARIO (URL configurable en la hoja TIENDAS) ======
+async function abrirHorario(){
+
+  const tienda = tiendaActual || localStorage.getItem("tienda");
+
+  if(!tienda){
+    alert("Escanea el QR de tu tienda una vez para ver el horario");
+    return;
+  }
+
+  const r = await api({ accion:"horario", tienda:tienda });
+
+  if(r.ok && r.url){
+    window.location.href = r.url;
+  }else{
+    alert(r.mensaje || "Esta tienda aún no tiene horario configurado");
+  }
+}
+
+// ====== ADMINISTRADOR (la clave se valida en el servidor) ======
+function abrirAdmin(){
+  claveIngresada = "";
+  document.getElementById("claveVisual").innerHTML = "";
+  document.getElementById("adminPanel").style.display = "block";
+}
+
+function cerrarAdmin(){
+  document.getElementById("adminPanel").style.display = "none";
+}
+
+function agregarNumero(num){
+  if(claveIngresada.length >= 4) return;
+  claveIngresada += num;
+  document.getElementById("claveVisual").innerHTML = "*".repeat(claveIngresada.length);
+}
+
+function borrarNumero(){
+  claveIngresada = claveIngresada.slice(0,-1);
+  document.getElementById("claveVisual").innerHTML = "*".repeat(claveIngresada.length);
+}
+
+async function validarClave(){
+
+  const r = await api({ accion:"admin", clave:claveIngresada });
+
+  if(r.ok){
+
+    limpiarEmpleadoAsignado();
+    cerrarAdmin();
+    alert("Modo administrador activado. Escanee el QR para elegir al empleado de este dispositivo.");
+
+    // Si ya se había escaneado una tienda, cargar su lista de inmediato
+    if(tiendaActual !== ""){
+      await cargarEmpleados();
+    }
+
+  }else{
+    alert("Clave incorrecta");
+    claveIngresada = "";
+    document.getElementById("claveVisual").innerHTML = "";
+  }
+}
+
+</script>
+
+</body>
+</html>
